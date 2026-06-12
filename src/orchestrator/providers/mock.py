@@ -13,12 +13,19 @@ from ..spec import Resource
 class MockProvider(Provider):
     def __init__(self) -> None:
         self._store: dict[str, ResourceState] = {}
-        # name -> exception to raise on create, for partial-failure tests.
+        # name -> exception to raise on create/delete, for partial-failure tests.
         self._fail_on_create: dict[str, Exception] = {}
+        self._fail_on_delete: dict[str, Exception] = {}
+        self._deleted: list[str] = []
 
     def fail_create(self, name: str, exc: Exception | None = None) -> None:
         """Arrange for create(name) to raise, simulating a partial failure."""
         self._fail_on_create[name] = exc or RuntimeError(f"injected create failure: {name}")
+
+    def fail_delete(self, name: str, exc: Exception | None = None) -> None:
+        """Arrange for delete(name) to raise, simulating a delete that may not
+        have landed — the case a resumable rollback must handle."""
+        self._fail_on_delete[name] = exc or RuntimeError(f"injected delete failure: {name}")
 
     def read(self, resource: Resource) -> ResourceState | None:
         return self._store.get(resource.name)
@@ -39,8 +46,15 @@ class MockProvider(Provider):
         return state
 
     def delete(self, state: ResourceState) -> None:
-        self._store.pop(state.name, None)
+        if state.name in self._fail_on_delete:
+            raise self._fail_on_delete[state.name]
+        self._store.pop(state.name, None)  # idempotent: safe to re-delete
+        self._deleted.append(state.name)
 
     def live(self) -> list[str]:
         """Test/inspection helper: names of currently-live resources."""
         return sorted(self._store)
+
+    def deletions(self) -> list[str]:
+        """Test/inspection helper: names deleted, in call order."""
+        return list(self._deleted)
