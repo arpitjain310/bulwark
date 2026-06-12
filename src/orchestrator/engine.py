@@ -6,29 +6,11 @@ while preserving durable ones.
 """
 from __future__ import annotations
 
+from .graph import topological_order
 from .provider import Provider, ResourceState
 from .rollback import RollbackEngine
-from .spec import Resource, Spec
+from .spec import Spec
 from .state import StateStore
-
-
-def topological_order(resources: list[Resource]) -> list[Resource]:
-    """Resources ordered so every dependency precedes its dependents."""
-    by_name = {r.name: r for r in resources}
-    ordered: list[Resource] = []
-    seen: set[str] = set()
-
-    def visit(r: Resource) -> None:
-        if r.name in seen:
-            return
-        for dep in r.depends_on:
-            visit(by_name[dep])
-        seen.add(r.name)
-        ordered.append(r)
-
-    for r in resources:
-        visit(r)
-    return ordered
 
 
 class Orchestrator:
