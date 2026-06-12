@@ -1,19 +1,37 @@
 """Rollback and teardown for a managed stack.
 
-rollback() runs after a partial-failure apply: delete resources created in this
-run in reverse dependency order, preserve durable ones, never touch protected.
+rollback() runs after a partial-failure apply: delete the resources created in
+this run in reverse-topological order (dependents before dependencies), preserve
+durable ones, never touch protected ones. Each resource moves through an explicit
+lifecycle: PENDING -> DELETING -> DELETED / FAILED / PRESERVED.
+
+The delete order is computed from the dependency graph, not from the creation
+list, so rollback can run from persisted state alone — the basis for making it
+resumable next.
+
 teardown() destroys a whole stack under the same protected guard.
 
-rollback() is currently a first cut (reverse creation order). Target: an explicit
-per-resource state machine (PENDING -> DELETING -> DELETED / FAILED / PRESERVED),
-reverse-topological, and resumable so a rollback that fails partway can re-run and
-converge.
+Not yet resumable: a delete that fails mid-rollback re-raises rather than
+persisting progress and converging on re-run.
 """
 from __future__ import annotations
 
+import enum
+
+from .graph import topological_order
 from .provider import Provider, ResourceState
 from .spec import Spec
 from .state import StateStore
+
+
+class Phase(enum.Enum):
+    """Per-resource lifecycle during a rollback."""
+
+    PENDING = "pending"
+    DELETING = "deleting"
+    DELETED = "deleted"
+    FAILED = "failed"
+    PRESERVED = "preserved"
 
 
 class ProtectedResourceError(RuntimeError):
@@ -25,15 +43,32 @@ class RollbackEngine:
         self.provider = provider
         self.store = store
 
-    def rollback(self, spec: Spec, created_this_run: list[ResourceState]) -> None:
-        by_name = {r.name: r for r in spec.resources}
-        # First cut: reverse creation order. Target: reverse-topological + resumable.
-        for state in reversed(created_this_run):
-            res = by_name.get(state.name)
-            if res is None or res.durable or res.protected:
-                continue  # preserve durable; never touch protected
-            self.provider.delete(state)
-            self.store.forget(state.name)
+    def rollback(
+        self, spec: Spec, created_this_run: list[ResourceState]
+    ) -> dict[str, Phase]:
+        """Tear down this run's resources, preserving durable/protected ones.
+
+        Returns the final phase of each targeted resource.
+        """
+        states = {s.name: s for s in created_this_run}
+        targets = set(states)
+        phases = {name: Phase.PENDING for name in targets}
+
+        # Reverse-topological: dependents are deleted before their dependencies.
+        order = [r for r in reversed(topological_order(spec.resources)) if r.name in targets]
+        for res in order:
+            if res.durable or res.protected:
+                phases[res.name] = Phase.PRESERVED
+                continue
+            phases[res.name] = Phase.DELETING
+            try:
+                self.provider.delete(states[res.name])
+            except Exception:
+                phases[res.name] = Phase.FAILED
+                raise
+            phases[res.name] = Phase.DELETED
+            self.store.forget(res.name)
+        return phases
 
     def teardown(self, spec: Spec) -> None:
         """Destroy the whole stack. Protected resources are un-deletable.

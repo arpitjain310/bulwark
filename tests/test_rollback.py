@@ -41,6 +41,26 @@ def test_teardown_refuses_protected(tmp_path):
         RollbackEngine(provider, store).teardown(spec)
 
 
+def test_rollback_deletes_dependents_before_dependencies(tmp_path):
+    spec_text = """
+resources:
+  - {name: net, type: vpc}
+  - {name: app, type: service, depends_on: [net]}
+  - {name: lb, type: lb, depends_on: [app]}
+"""
+    provider = MockProvider()
+    provider.fail_create("lb")  # fail after net + app are created
+    store = StateStore(tmp_path / "s.json")
+    spec = load_spec(spec_text)
+
+    with pytest.raises(RuntimeError):
+        Orchestrator(provider, store).apply(spec)
+
+    # Reverse-topological: the dependent (app) is torn down before its
+    # dependency (net), regardless of creation order.
+    assert provider.deletions() == ["app", "net"]
+
+
 @pytest.mark.skip(reason="resumable reverse-topological state machine not built yet")
 def test_rollback_is_resumable_after_a_failed_delete():
     """A rollback that itself fails partway must converge on re-run."""
