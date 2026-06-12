@@ -1,0 +1,21 @@
+# Example declarative spec. Demonstrates the durable / ephemeral / protected
+# distinction that drives rollback and teardown behavior.
+version: 1
+resources:
+  - name: network
+    type: vpc
+    durable: true          # preserved on rollback
+
+  - name: database
+    type: postgres
+    depends_on: [network]
+    durable: true
+    protected: true        # structurally un-deletable, ever
+
+  - name: cache
+    type: redis
+    depends_on: [network]  # ephemeral: torn down on partial-failure rollback
+
+  - name: app
+    type: service
+    depends_on: [database, cache]

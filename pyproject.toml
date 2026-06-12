@@ -1,0 +1,36 @@
+[project]
+name = "bulwark"
+version = "0.0.1"
+description = "Declarative multi-resource provisioning with idempotent re-runs, partial-failure rollback, and guarded teardown."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+localstack = [
+    "boto3>=1.34",
+]
+
+[project.scripts]
+orchestrate = "orchestrator.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orchestrator"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
