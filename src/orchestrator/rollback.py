@@ -17,8 +17,10 @@ teardown() destroys a whole stack under the same protected guard.
 from __future__ import annotations
 
 import enum
+import time
 
 from .graph import topological_order
+from .lifecycle import emit
 from .provider import Provider, ResourceState
 from .spec import Protection, Spec
 from .state import StateStore
@@ -87,7 +89,8 @@ class RollbackEngine:
         to_delete: list[str] = []
         for res in order:
             if res.protection is not Protection.EPHEMERAL:
-                phases[res.name] = Phase.PRESERVED  # durable and protected both survives
+                phases[res.name] = Phase.PRESERVED  # durable and protected both survive
+                emit(res.name, "preserved")
             else:
                 to_delete.append(res.name)
 
@@ -114,15 +117,19 @@ class RollbackEngine:
                 phases[name] = Phase.DELETED  # already gone
                 continue
             phases[name] = Phase.DELETING
+            start = time.perf_counter()
             try:
                 self.provider.delete(state)
             except Exception as exc:
                 # Record and keep going; a stuck resource must not block the rest.
                 phases[name] = Phase.FAILED
                 failures[name] = exc
+                emit(name, "delete_failed", status="error",
+                     duration_ms=(time.perf_counter() - start) * 1000)
                 continue
             self.store.forget(name)
             phases[name] = Phase.DELETED
+            emit(name, "deleted", duration_ms=(time.perf_counter() - start) * 1000)
         return phases, failures
 
     def teardown(self, spec: Spec) -> dict[str, Phase]:

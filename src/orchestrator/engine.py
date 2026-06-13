@@ -6,7 +6,10 @@ while preserving durable ones.
 """
 from __future__ import annotations
 
+import time
+
 from .graph import topological_order
+from .lifecycle import emit
 from .provider import Provider, ResourceState
 from .rollback import RollbackEngine, RollbackError
 from .spec import Spec
@@ -35,12 +38,20 @@ class Orchestrator:
                     if self.store.get(resource.name) is None:
                         self.store.put(live)  # adopt a resource that already existed
                     results.append(live)
+                    emit(resource.name, "exists")
                     continue
                 # Not in reality (new, or drifted away since last apply) -> create.
-                state = self.provider.create(resource)
+                start = time.perf_counter()
+                try:
+                    state = self.provider.create(resource)
+                except Exception:
+                    emit(resource.name, "create_failed", status="error",
+                         duration_ms=(time.perf_counter() - start) * 1000)
+                    raise
                 self.store.put(state)
                 created_this_run.append(state)
                 results.append(state)
+                emit(resource.name, "created", duration_ms=(time.perf_counter() - start) * 1000)
             return results
         except Exception as apply_error:
             try:
