@@ -63,4 +63,8 @@ class StateStore:
         data: dict = {"resources": self._resources}
         if self._rollback is not None:
             data["rollback"] = self._rollback
-        self.path.write_text(json.dumps(data, indent=2, sort_keys=True))
+        # Write to a temp file and swap it in, so a crash mid-write leaves the
+        # previous state file intact rather than half-written.
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+        tmp.replace(self.path)
