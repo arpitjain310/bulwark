@@ -2,7 +2,13 @@ import pytest
 
 from orchestrator.engine import Orchestrator
 from orchestrator.providers.mock import MockProvider
-from orchestrator.rollback import Phase, ProtectedResourceError, RollbackEngine, RollbackError
+from orchestrator.rollback import (
+    Phase,
+    ProtectedResourceError,
+    RollbackEngine,
+    RollbackError,
+    TeardownError,
+)
 from orchestrator.spec import load_spec
 from orchestrator.state import StateStore
 
@@ -60,6 +66,25 @@ resources:
     assert provider.live() == []                    # durable 'net' is gone too
     assert provider.deletions() == ["app", "net"]   # reverse-topological
     assert phases["net"] == Phase.DELETED
+
+
+def test_teardown_is_best_effort_then_raises(tmp_path):
+    spec_text = """
+resources:
+  - {name: net, type: vpc}
+  - {name: app, type: service, depends_on: [net]}
+"""
+    provider = MockProvider()
+    store = StateStore(tmp_path / "s.json")
+    spec = load_spec(spec_text)
+    Orchestrator(provider, store).apply(spec)
+
+    provider.fail_delete("net")  # the dependency won't delete
+    with pytest.raises(TeardownError):
+        RollbackEngine(provider, store).teardown(spec)
+
+    assert "app" not in provider.live()
+    assert "net" in provider.live()
 
 
 def test_rollback_deletes_dependents_before_dependencies(tmp_path):

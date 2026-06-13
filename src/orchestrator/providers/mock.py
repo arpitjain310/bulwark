@@ -16,6 +16,7 @@ class MockProvider(Provider):
         # name -> exception to raise on create/delete, for partial-failure tests.
         self._fail_on_create: dict[str, Exception] = {}
         self._fail_on_delete: dict[str, Exception] = {}
+        self._created: list[str] = []
         self._deleted: list[str] = []
 
     def fail_create(self, name: str, exc: Exception | None = None) -> None:
@@ -48,6 +49,7 @@ class MockProvider(Provider):
             attributes=dict(resource.config),
         )
         self._store[resource.name] = state
+        self._created.append(resource.name)
         return state
 
     def delete(self, state: ResourceState) -> None:
@@ -59,6 +61,10 @@ class MockProvider(Provider):
     def live(self) -> list[str]:
         """Test/inspection helper: names of currently-live resources."""
         return sorted(self._store)
+
+    def creations(self) -> list[str]:
+        """Test/inspection helper: names created, in call order."""
+        return list(self._created)
 
     def deletions(self) -> list[str]:
         """Test/inspection helper: names deleted, in call order."""
