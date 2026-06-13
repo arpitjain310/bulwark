@@ -63,6 +63,21 @@ Scope is the bottleneck, not time. This repo deliberately does **not**:
   real infrastructure.
 - Provide a config DSL beyond a small validated YAML spec.
 
+## The protection ladder
+
+Each resource selects a single protection level. These levels form an ordered
+hierarchy of retention, and rollback and teardown interpret them differently:
+
+```
+                rollback        teardown
+ephemeral       delete          delete
+durable         preserve        delete
+protected       preserve        refuse the run
+```
+
+Using a single protection level makes contradictory policies impossible to
+express — a resource cannot be marked protected without also being durable.
+
 ## Rollback behaviour
 
 - **Reverse-topological:** dependents are deleted before their dependencies.
@@ -72,6 +87,19 @@ Scope is the bottleneck, not time. This repo deliberately does **not**:
   recomputed from the graph, so a rollback interrupted by a failed delete re-runs
   from disk and converges. This requires delete operations to be idempotent.
 - **Best-effort completion:** A failed delete does not prevent subsequent deletes from running. After all possible operations have been attempted, a RollbackError is raised containing the list of failures, with the original apply error preserved as the cause.
+
+## Teardown behaviour
+
+Teardown is an explicit request to destroy the entire stack. Unlike rollback, it
+deletes durable resources as well. However, if any resource is marked protected,
+teardown refuses the entire operation and deletes nothing — mirroring Terraform's
+`prevent_destroy`.
+
+Rollback and teardown use the same deletion engine but apply different policies.
+Rollback preserves protected resources because it is recovering from a partially
+completed apply and must reach a consistent end state. Teardown, by contrast,
+treats protected resources as a safeguard against unintended destructive actions
+initiated by the user.
 
 ## Quickstart
 
