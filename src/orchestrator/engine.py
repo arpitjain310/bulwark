@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from .graph import topological_order
 from .provider import Provider, ResourceState
-from .rollback import RollbackEngine
+from .rollback import RollbackEngine, RollbackError
 from .spec import Spec
 from .state import StateStore
 
@@ -37,6 +37,10 @@ class Orchestrator:
                 created_this_run.append(state)
                 results.append(state)
             return results
-        except Exception:
-            RollbackEngine(self.provider, self.store).rollback(spec, created_this_run)
-            raise
+        except Exception as apply_error:
+            try:
+                RollbackEngine(self.provider, self.store).rollback(spec, created_this_run)
+            except RollbackError as rollback_error:
+                # Cleanup itself failed: surface that, keeping the apply error as cause.
+                raise rollback_error from apply_error
+            raise  # clean rollback: re-raise the original apply failure

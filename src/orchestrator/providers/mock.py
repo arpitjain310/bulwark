@@ -27,6 +27,11 @@ class MockProvider(Provider):
         have landed — the case a resumable rollback must handle."""
         self._fail_on_delete[name] = exc or RuntimeError(f"injected delete failure: {name}")
 
+    def heal(self) -> None:
+        """Clear injected faults, simulating a transient failure resolving."""
+        self._fail_on_create.clear()
+        self._fail_on_delete.clear()
+
     def read(self, resource: Resource) -> ResourceState | None:
         return self._store.get(resource.name)
 

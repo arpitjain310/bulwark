@@ -2,7 +2,7 @@ import pytest
 
 from orchestrator.engine import Orchestrator
 from orchestrator.providers.mock import MockProvider
-from orchestrator.rollback import ProtectedResourceError, RollbackEngine
+from orchestrator.rollback import Phase, ProtectedResourceError, RollbackEngine, RollbackError
 from orchestrator.spec import load_spec
 from orchestrator.state import StateStore
 
@@ -61,6 +61,28 @@ resources:
     assert provider.deletions() == ["app", "net"]
 
 
-@pytest.mark.skip(reason="resumable reverse-topological state machine not built yet")
-def test_rollback_is_resumable_after_a_failed_delete():
-    """A rollback that itself fails partway must converge on re-run."""
+def test_rollback_is_resumable_after_a_failed_delete(tmp_path):
+    """A rollback that itself fails partway converges on re-run from disk."""
+    statepath = tmp_path / "s.json"
+    spec = load_spec(SPEC)
+    provider = MockProvider()
+    provider.fail_create("app")    # apply fails at the last resource
+    provider.fail_delete("cache")  # rollback can't delete the ephemeral
+    store = StateStore(statepath)
+
+    with pytest.raises(RollbackError):
+        Orchestrator(provider, store).apply(spec)
+
+    assert "cache" in provider.live()  # the failed delete left it behind
+
+    # Resume as if in a fresh process: the transient fault clears, and a new
+    # StateStore reads the rollback journal back from disk.
+    provider.heal()
+    resumed = StateStore(statepath)
+    phases = RollbackEngine(provider, resumed).rollback(spec)
+
+    assert phases["cache"] == Phase.DELETED
+    assert "cache" not in provider.live()  # converged
+    assert "net" in provider.live()        # durable preserved
+    assert "db" in provider.live()         # protected preserved
+    assert StateStore(statepath).rollback_targets() is None  # journal cleared
