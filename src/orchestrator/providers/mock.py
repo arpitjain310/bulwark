@@ -6,18 +6,29 @@ deterministic.
 """
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
+from pathlib import Path
+
 from ..provider import Provider, ResourceState
 from ..spec import Resource
 
 
 class MockProvider(Provider):
-    def __init__(self) -> None:
+    def __init__(self, sidecar: Path | None = None) -> None:
+        # With a sidecar parameter the mock persists to JSON, so a CLI
+        # re-apply sees the resources a previous run created. Without one it is 
+        # in-memory.
+        self._sidecar = Path(sidecar) if sidecar else None
         self._store: dict[str, ResourceState] = {}
         # name -> exception to raise on create/delete, for partial-failure tests.
         self._fail_on_create: dict[str, Exception] = {}
         self._fail_on_delete: dict[str, Exception] = {}
         self._created: list[str] = []
         self._deleted: list[str] = []
+        if self._sidecar and self._sidecar.exists():
+            raw = json.loads(self._sidecar.read_text())
+            self._store = {name: ResourceState(**data) for name, data in raw.items()}
 
     def fail_create(self, name: str, exc: Exception | None = None) -> None:
         """Arrange for create(name) to raise, simulating a partial failure."""
@@ -50,6 +61,7 @@ class MockProvider(Provider):
         )
         self._store[resource.name] = state
         self._created.append(resource.name)
+        self._save()
         return state
 
     def delete(self, state: ResourceState) -> None:
@@ -57,6 +69,12 @@ class MockProvider(Provider):
             raise self._fail_on_delete[state.name]
         self._store.pop(state.name, None)  # idempotent: safe to re-delete
         self._deleted.append(state.name)
+        self._save()
+
+    def _save(self) -> None:
+        if self._sidecar:
+            data = {name: asdict(state) for name, state in self._store.items()}
+            self._sidecar.write_text(json.dumps(data, indent=2, sort_keys=True))
 
     def live(self) -> list[str]:
         """Test/inspection helper: names of currently-live resources."""
