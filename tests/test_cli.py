@@ -2,8 +2,8 @@ from orchestrator.cli import main
 
 SPEC = """
 resources:
-  - {name: net, type: vpc, durable: true}
-  - {name: db, type: postgres, depends_on: [net], protected: true}
+  - {name: net, type: vpc, protection: durable}
+  - {name: db, type: postgres, depends_on: [net], protection: protected}
   - {name: cache, type: redis, depends_on: [net]}
   - {name: app, type: service, depends_on: [db, cache]}
 """

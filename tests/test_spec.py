@@ -32,3 +32,15 @@ def test_rejects_cycle():
             "{name: a, type: t, depends_on: [b]}, "
             "{name: b, type: t, depends_on: [a]}]"
         )
+
+
+def test_rejects_invalid_protection():
+    with pytest.raises(ValueError):
+        load_spec("resources: [{name: a, type: t, protection: super}]")
+
+
+def test_rejects_unknown_field():
+    # The old durable/protected booleans are now removed; a stale spec fails loudly
+    # instead of being ignored.
+    with pytest.raises(ValueError):
+        load_spec("resources: [{name: a, type: t, durable: true}]")

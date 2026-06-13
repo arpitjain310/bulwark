@@ -8,8 +8,8 @@ from orchestrator.state import StateStore
 
 SPEC = """
 resources:
-  - {name: net, type: vpc, durable: true}
-  - {name: db, type: postgres, depends_on: [net], protected: true}
+  - {name: net, type: vpc, protection: durable}
+  - {name: db, type: postgres, depends_on: [net], protection: protected}
   - {name: cache, type: redis, depends_on: [net]}
   - {name: app, type: service, depends_on: [db, cache]}
 """
@@ -31,7 +31,7 @@ def test_rollback_preserves_durable_and_protected(tmp_path):
     assert "app" not in live     # never created
 
 
-def test_teardown_refuses_protected(tmp_path):
+def test_teardown_refuses_protected_before_any_delete(tmp_path):
     provider = MockProvider()
     store = StateStore(tmp_path / "s.json")
     spec = load_spec(SPEC)
@@ -39,6 +39,27 @@ def test_teardown_refuses_protected(tmp_path):
 
     with pytest.raises(ProtectedResourceError):
         RollbackEngine(provider, store).teardown(spec)
+    assert provider.deletions() == []  # aborted before touching anything
+
+
+def test_teardown_deletes_durable_unlike_rollback(tmp_path):
+    # No protected resource, so teardown proceeds — and removes the durable one,
+    # which a rollback would have kept. That difference is the whole point.
+    spec_text = """
+resources:
+  - {name: net, type: vpc, protection: durable}
+  - {name: app, type: service, depends_on: [net]}
+"""
+    provider = MockProvider()
+    store = StateStore(tmp_path / "s.json")
+    spec = load_spec(spec_text)
+    Orchestrator(provider, store).apply(spec)
+
+    phases = RollbackEngine(provider, store).teardown(spec)
+
+    assert provider.live() == []                    # durable 'net' is gone too
+    assert provider.deletions() == ["app", "net"]   # reverse-topological
+    assert phases["net"] == Phase.DELETED
 
 
 def test_rollback_deletes_dependents_before_dependencies(tmp_path):

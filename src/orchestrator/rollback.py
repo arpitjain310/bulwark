@@ -20,7 +20,7 @@ import enum
 
 from .graph import topological_order
 from .provider import Provider, ResourceState
-from .spec import Spec
+from .spec import Protection, Spec
 from .state import StateStore
 
 
@@ -38,17 +38,24 @@ class ProtectedResourceError(RuntimeError):
     """Raised on any attempt to delete a protected resource."""
 
 
-class RollbackError(RuntimeError):
-    """A rollback finished with one or more resources left undeleted.
+class DeletionError(RuntimeError):
+    """A bulk delete finished with one or more resources left undeleted.
 
-    Carries the per-resource delete failures; the apply error that triggered the
-    rollback is attached as this exception's cause.
+    Carries the per-resource failures and the final phase of every resource.
     """
 
     def __init__(self, failures: dict[str, Exception], phases: dict[str, Phase]) -> None:
         self.failures = failures
         self.phases = phases
-        super().__init__("rollback incomplete; undeleted: " + ", ".join(sorted(failures)))
+        super().__init__("undeleted: " + ", ".join(sorted(failures)))
+
+
+class RollbackError(DeletionError):
+    """Rollback left resources undeleted; the triggering apply error is the cause."""
+
+
+class TeardownError(DeletionError):
+    """Teardown left resources undeleted."""
 
 
 class RollbackEngine:
@@ -77,43 +84,66 @@ class RollbackEngine:
         # with no created_this_run still orders correctly).
         order = [r for r in reversed(topological_order(spec.resources)) if r.name in targetset]
         phases: dict[str, Phase] = {}
-        failures: dict[str, Exception] = {}
+        to_delete: list[str] = []
         for res in order:
-            if res.durable or res.protected:
-                phases[res.name] = Phase.PRESERVED
-                continue
-            state = self.store.get(res.name)
-            if state is None:
-                phases[res.name] = Phase.DELETED  # already gone
-                continue
-            phases[res.name] = Phase.DELETING
-            try:
-                self.provider.delete(state)
-            except Exception as exc:
-                # Record and keep going; a stuck resource must not block the rest.
-                phases[res.name] = Phase.FAILED
-                failures[res.name] = exc
-                continue
-            self.store.forget(res.name)
-            phases[res.name] = Phase.DELETED
+            if res.protection is not Protection.EPHEMERAL:
+                phases[res.name] = Phase.PRESERVED  # durable and protected both survives
+            else:
+                to_delete.append(res.name)
 
+        del_phases, failures = self._delete_each(to_delete)
+        phases.update(del_phases)
         if failures:
             raise RollbackError(failures, phases)
         self.store.end_rollback()
         return phases
 
-    def teardown(self, spec: Spec) -> None:
-        """Destroy the whole stack. Protected resources are un-deletable.
+    def _delete_each(
+        self, names: list[str]
+    ) -> tuple[dict[str, Phase], dict[str, Exception]]:
+        """Delete the given resources in order.
 
-        The guard runs first and unconditionally: a teardown that would touch a
-        protected resource fails before deleting anything.
+        A failed delete is recorded and the rest still run. Deletes must be
+        idempotent: a name already gone counts as deleted.
+        """
+        phases: dict[str, Phase] = {}
+        failures: dict[str, Exception] = {}
+        for name in names:
+            state = self.store.get(name)
+            if state is None:
+                phases[name] = Phase.DELETED  # already gone
+                continue
+            phases[name] = Phase.DELETING
+            try:
+                self.provider.delete(state)
+            except Exception as exc:
+                # Record and keep going; a stuck resource must not block the rest.
+                phases[name] = Phase.FAILED
+                failures[name] = exc
+                continue
+            self.store.forget(name)
+            phases[name] = Phase.DELETED
+        return phases, failures
+
+    def teardown(self, spec: Spec) -> dict[str, Phase]:
+        """Destroy the whole stack in reverse-topological order.
+
+        Teardown is an explicit destroy, so it removes durable resources too —
+        the ones a rollback would keep. But a single protected resource makes it
+        refuse the entire run before deleting anything. Similar in the way a Terraform's
+        prevent_destroy aborts a plan.
         """
         by_name = {r.name: r for r in spec.resources}
-        for state in self.store.all():
-            res = by_name.get(state.name)
-            if res is not None and res.protected:
-                raise ProtectedResourceError(
-                    f"refusing to delete protected resource '{state.name}'"
-                )
-        # Reverse-topological teardown with lifecycle logging is not built yet.
-        raise NotImplementedError("teardown state machine not implemented yet")
+        managed = {s.name for s in self.store.all()}
+
+        # One protected resource aborts the run before any delete.
+        for name in sorted(managed):
+            res = by_name.get(name)
+            if res is not None and res.protection is Protection.PROTECTED:
+                raise ProtectedResourceError(f"refusing to tear down protected resource '{name}'")
+
+        order = [r.name for r in reversed(topological_order(spec.resources)) if r.name in managed]
+        phases, failures = self._delete_each(order)
+        if failures:
+            raise TeardownError(failures, phases)
+        return phases

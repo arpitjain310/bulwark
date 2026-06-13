@@ -4,17 +4,16 @@ version: 1
 resources:
   - name: network
     type: vpc
-    durable: true          # preserved on rollback
+    protection: durable      # kept on rollback, removed on teardown
 
   - name: database
     type: postgres
     depends_on: [network]
-    durable: true
-    protected: true        # structurally un-deletable, ever
+    protection: protected    # never deleted; a teardown that hits it aborts itself
 
   - name: cache
     type: redis
-    depends_on: [network]  # ephemeral: torn down on partial-failure rollback
+    depends_on: [network]    # ephemeral (default): torn down on rollback
 
   - name: app
     type: service

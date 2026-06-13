@@ -8,21 +8,38 @@ disposable it is, which is what a rollback consults:
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+import enum
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class Protection(str, enum.Enum):
+    """How disposable a resource is — an ordered ladder of stickiness.
+
+    Because it's a single field, the contradictory state (protected but not
+    durable) simply can't be written, so there's nothing to validate.
+    """
+
+    EPHEMERAL = "ephemeral"
+    DURABLE = "durable"
+    PROTECTED = "protected"
 
 
 class Resource(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # reject unknown keys loudly
+
     name: str
     type: str
     # Inputs handed to the provider
     config: dict = Field(default_factory=dict)
     # Names of resources that must exist before this one (creation order).
     depends_on: list[str] = Field(default_factory=list)
-    durable: bool = False
-    protected: bool = False
+    protection: Protection = Protection.EPHEMERAL
 
 
 class Spec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     version: int = 1
     resources: list[Resource]
 
