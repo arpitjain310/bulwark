@@ -27,7 +27,11 @@ class Provider(ABC):
 
     @abstractmethod
     def read(self, resource: Resource) -> ResourceState | None:
-        """Return live state, or None if the resource does not exist."""
+        """Return live state from the backend, or None if it doesn't exist.
+
+        Apply calls this to reconcile: a resource that reads back is a no-op, one
+        that's missing gets (re)created.
+        """
 
     @abstractmethod
     def create(self, resource: Resource) -> ResourceState:

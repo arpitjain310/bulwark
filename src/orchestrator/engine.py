@@ -21,6 +21,8 @@ class Orchestrator:
     def apply(self, spec: Spec) -> list[ResourceState]:
         """Create/reconcile every resource in dependency order, idempotently.
 
+        Existence is decided by reading reality, not by trusting the state file:
+        a resource still live is a no-op, one that drifted away is recreated.
         Returns the resulting live states. On failure, triggers rollback of
         this run's ephemeral resources and re-raises.
         """
@@ -28,10 +30,13 @@ class Orchestrator:
         try:
             results: list[ResourceState] = []
             for resource in topological_order(spec.resources):
-                existing = self.store.get(resource.name)
-                if existing is not None:
-                    results.append(existing)  # idempotent no-op
+                live = self.provider.read(resource)
+                if live is not None:
+                    if self.store.get(resource.name) is None:
+                        self.store.put(live)  # adopt a resource that already existed
+                    results.append(live)
                     continue
+                # Not in reality (new, or drifted away since last apply) -> create.
                 state = self.provider.create(resource)
                 self.store.put(state)
                 created_this_run.append(state)
