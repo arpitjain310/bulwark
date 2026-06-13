@@ -63,6 +63,16 @@ Scope is the bottleneck, not time. This repo deliberately does **not**:
   real infrastructure.
 - Provide a config DSL beyond a small validated YAML spec.
 
+## Rollback behaviour
+
+- **Reverse-topological:** dependents are deleted before their dependencies.
+- **Preserve by class:** durable resources survive a rollback, while protected ones are
+  never touched.
+- **Resumable:** the target set is journaled to the state file and the order is
+  recomputed from the graph, so a rollback interrupted by a failed delete re-runs
+  from disk and converges. This requires delete operations to be idempotent.
+- **Best-effort completion:** A failed delete does not prevent subsequent deletes from running. After all possible operations have been attempted, a RollbackError is raised containing the list of failures, with the original apply error preserved as the cause.
+
 ## Quickstart
 
 ```bash
@@ -70,4 +80,7 @@ python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 pytest -q
 orchestrate apply examples/stack.yaml
+
+# Simulate a partial failure roll back: app fails, the durable/protected layers survive.
+orchestrate apply examples/stack.yaml --simulate-failure app
 ```

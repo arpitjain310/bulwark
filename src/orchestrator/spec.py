@@ -1,4 +1,4 @@
-"""Declarative spec format: parse and validate, rejecting bad input loudly.
+"""Declarative spec format: parse and validate, rejecting bad input.
 
 A spec describes a desired multi-resource stack. Each resource declares how
 disposable it is, which is what a rollback consults:
@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 class Resource(BaseModel):
     name: str
     type: str
-    # Inputs handed to the provider; opaque to the engine.
+    # Inputs handed to the provider
     config: dict = Field(default_factory=dict)
     # Names of resources that must exist before this one (creation order).
     depends_on: list[str] = Field(default_factory=list)
@@ -62,7 +62,7 @@ def _reject_cycles(resources: list[Resource]) -> None:
 
 
 def load_spec(text: str) -> Spec:
-    """Parse YAML text into a validated Spec. Raises ValueError on bad input."""
+    """Parse YAML text into a validated Spec."""
     import yaml
 
     data = yaml.safe_load(text)
