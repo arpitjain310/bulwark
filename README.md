@@ -6,7 +6,7 @@
 > re-runs, partial-failure rollback that preserves durable resources, and a
 > teardown that *structurally cannot* delete protected resources.
 
-**Status:** work in progress.
+**Status:** v0.1.0
 
 ## Demo
 

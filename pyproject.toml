@@ -1,6 +1,6 @@
 [project]
 name = "bulwark"
-version = "0.0.1"
+version = "0.1.0"
 description = "Declarative multi-resource provisioning with idempotent re-runs, partial-failure rollback, and guarded teardown."
 requires-python = ">=3.11"
 dependencies = [
