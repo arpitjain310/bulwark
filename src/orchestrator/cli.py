@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import sys
 from pathlib import Path
 
 from .engine import Orchestrator
+from .provider import Provider
 from .providers.mock import MockProvider
 from .rollback import RollbackEngine, RollbackError
 from .spec import Spec, load_spec
@@ -16,17 +19,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["apply", "teardown"])
     parser.add_argument("spec", type=Path, help="path to a YAML spec")
     parser.add_argument("--state", type=Path, default=Path(".orchestrator-state.json"))
+    parser.add_argument("--provider", choices=["mock", "aws"], default="mock")
+    parser.add_argument("--region", default="us-east-1", help="AWS region for --provider aws")
     parser.add_argument(
         "--simulate-failure",
         metavar="NAME",
-        help="it inject a create failure at NAME to demonstrate rollback",
+        help="inject a create failure at NAME to demonstrate rollback (mock only)",
     )
     args = parser.parse_args(argv)
 
+    _configure_logging()
     spec = load_spec(args.spec.read_text())
-    provider = MockProvider()  # TODO: select real provider via flag
-    if args.simulate_failure:
-        provider.fail_create(args.simulate_failure)
+    provider = _build_provider(args)
     store = StateStore(args.state)
 
     if args.command == "apply":
@@ -34,22 +38,36 @@ def main(argv: list[str] | None = None) -> int:
     return _teardown(provider, store, spec)
 
 
-def _apply(provider: MockProvider, store: StateStore, spec: Spec) -> int:
+def _build_provider(args: argparse.Namespace) -> Provider:
+    if args.provider == "aws":
+        if args.simulate_failure:
+            print("--simulate-failure is supported only with --provider mock")
+            raise SystemExit(2)
+        from .providers.real import AwsProvider  # lazy import keeps boto3 optional
+
+        return AwsProvider(region=args.region)
+
+    # Sidecar next to the state file so re-apply sees earlier runs' resources.
+    provider = MockProvider(sidecar=args.state.with_suffix(".mock.json"))
+    if args.simulate_failure:
+        provider.fail_create(args.simulate_failure)
+    return provider
+
+
+def _apply(provider: Provider, store: StateStore, spec: Spec) -> int:
     try:
         states = Orchestrator(provider, store).apply(spec)
     except RollbackError as exc:
-        print(f"apply failed AND rollback was incomplete: {exc}")
-        print(f"  still live (needs attention): {provider.live()}")
+        print(f"apply failed; rollback incomplete: {exc}")
         return 2
     except Exception as exc:
-        print(f"apply failed: {exc}")
-        print(f"  rolled back — torn down: {provider.deletions()}; preserved: {provider.live()}")
+        print(f"apply failed: {exc} (rolled back — see lifecycle log)")
         return 1
     print(f"applied {len(states)} resources: {[s.name for s in states]}")
     return 0
 
 
-def _teardown(provider: MockProvider, store: StateStore, spec: Spec) -> int:
+def _teardown(provider: Provider, store: StateStore, spec: Spec) -> int:
     try:
         RollbackEngine(provider, store).teardown(spec)
     except Exception as exc:
@@ -57,6 +75,16 @@ def _teardown(provider: MockProvider, store: StateStore, spec: Spec) -> int:
         return 1
     print("torn down")
     return 0
+
+
+def _configure_logging() -> None:
+    """Print lifecycle events to stderr."""
+    log = logging.getLogger("bulwark")
+    if not log.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
 
 
 if __name__ == "__main__":
