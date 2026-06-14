@@ -8,4 +8,5 @@ venv/
 dist/
 build/
 .orchestrator-state*
+.bulwark-local/
 .env
