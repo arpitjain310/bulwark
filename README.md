@@ -38,11 +38,11 @@ spec.yaml ──▶ parse + validate ──▶ plan (dependency order) ──▶
                                        PRESERVE durable, NEVER touch protected
 ```
 
-- **Declarative spec** (`spec.py`) — resources, dependencies, and per-resource
-  `durable` / `protected` flags. Bad input is rejected loudly (duplicate names,
-  unknown dependencies, dependency cycles).
-- **Pluggable provider** (`provider.py`) — the engine speaks one contract;
-  backends (`MockProvider`, later one real backend) implement it.
+- **Declarative spec** (`spec.py`) — resources, dependencies, and a per-resource
+  `protection` level. Bad input is rejected loudly (duplicate names, unknown
+  dependencies, dependency cycles, unknown fields).
+- **Pluggable provider** (`provider.py`) — the engine speaks one contract; the
+  in-memory `MockProvider` and a real AWS backend (`AwsProvider`) implement it.
 - **Idempotent apply** (`engine.py`) — resources created in dependency order;
   re-applying skips what already exists.
 - **State store** (`state.py`) — records what's been created so re-runs converge.
@@ -101,6 +101,17 @@ completed apply and must reach a consistent end state. Teardown, by contrast,
 treats protected resources as a safeguard against unintended destructive actions
 initiated by the user.
 
+## Real backend (AWS)
+
+The engine is provider-agnostic. AWS is the one real backend:
+
+- `s3_bucket` → a real S3 bucket, seeded with an object (durable storage)
+- `dynamodb_table` → a real DynamoDB table, seeded with a row (protected database)
+
+Other resource types are tracked in-process and don't call AWS. Every run emits
+one lifecycle event per resource transition to stderr (a JSON line: resource,
+action, status, duration).
+
 ## Quickstart
 
 ```bash
@@ -109,6 +120,11 @@ pip install -e ".[dev]"
 pytest -q
 orchestrate apply examples/stack.yaml
 
-# Simulate a partial failure roll back: app fails, the durable/protected layers survive.
+# Simulate a partial failure rollback: app fails, the durable/protected layers survive.
 orchestrate apply examples/stack.yaml --simulate-failure app
+
+# Against real AWS (needs credentials; set a unique bucket name in the spec first):
+pip install -e ".[aws]"
+orchestrate apply examples/aws-stack.yaml --provider aws --region us-east-1
+orchestrate teardown examples/aws-stack.yaml --provider aws   
 ```
