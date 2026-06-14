@@ -1,0 +1,37 @@
+# Real-backend stack for `--provider aws`.
+#
+# storage  -> a real S3 bucket (durable: kept on rollback)
+# database -> a real DynamoDB table (protected: blocks teardown)
+# network / compute / load_balancer are ephemeral plumbing with no cloud cost.
+#
+# compute depends on BOTH network and database, so reverse-creation
+# order differs from reverse-topological order.
+#
+# NOTE: S3 bucket names are globally unique.
+version: 1
+resources:
+  - name: network
+    type: network
+    protection: ephemeral
+
+  - name: database
+    type: dynamodb_table
+    depends_on: [network]
+    protection: protected
+    config: {table: bulwark-demo-db}
+
+  - name: storage
+    type: s3_bucket
+    depends_on: [network]
+    protection: durable
+    config: {bucket: bulwark-demo-storage-dev-310}
+
+  - name: compute
+    type: compute
+    depends_on: [network, database]
+    protection: ephemeral
+
+  - name: load_balancer
+    type: load_balancer
+    depends_on: [compute]
+    protection: ephemeral

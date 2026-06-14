@@ -13,7 +13,9 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
 ]
-localstack = [
+# Optional: install with `pip install -e ".[aws]"`
+# --provider aws. CI and the test suite run entirely on the mock, no credentials needed.
+aws = [
     "boto3>=1.34",
 ]
 
