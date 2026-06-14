@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .engine import Orchestrator
 from .provider import Provider
+from .providers.fault import FaultInjectingProvider
 from .providers.mock import MockProvider
 from .rollback import RollbackEngine, RollbackError
 from .spec import Spec, load_spec
@@ -19,12 +20,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["apply", "teardown"])
     parser.add_argument("spec", type=Path, help="path to a YAML spec")
     parser.add_argument("--state", type=Path, default=Path(".orchestrator-state.json"))
-    parser.add_argument("--provider", choices=["mock", "aws"], default="mock")
+    parser.add_argument("--provider", choices=["mock", "aws", "local"], default="mock")
     parser.add_argument("--region", default="us-east-1", help="AWS region for --provider aws")
+    parser.add_argument(
+        "--root", type=Path, default=Path(".bulwark-local"),
+        help="base directory for --provider local",
+    )
     parser.add_argument(
         "--simulate-failure",
         metavar="NAME",
-        help="inject a create failure at NAME to demonstrate rollback (mock only)",
+        help="inject a create failure at NAME to demonstrate rollback",
     )
     args = parser.parse_args(argv)
 
@@ -39,19 +44,23 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _build_provider(args: argparse.Namespace) -> Provider:
+    provider = _base_provider(args)
+    if args.simulate_failure:
+        provider = FaultInjectingProvider(provider, {args.simulate_failure})
+    return provider
+
+
+def _base_provider(args: argparse.Namespace) -> Provider:
     if args.provider == "aws":
-        if args.simulate_failure:
-            print("--simulate-failure is supported only with --provider mock")
-            raise SystemExit(2)
         from .providers.real import AwsProvider  # lazy import keeps boto3 optional
 
         return AwsProvider(region=args.region)
+    if args.provider == "local":
+        from .providers.local import LocalFilesystemProvider
 
+        return LocalFilesystemProvider(root=args.root)
     # Sidecar next to the state file so re-apply sees earlier runs' resources.
-    provider = MockProvider(sidecar=args.state.with_suffix(".mock.json"))
-    if args.simulate_failure:
-        provider.fail_create(args.simulate_failure)
-    return provider
+    return MockProvider(sidecar=args.state.with_suffix(".mock.json"))
 
 
 def _apply(provider: Provider, store: StateStore, spec: Spec) -> int:
@@ -61,7 +70,7 @@ def _apply(provider: Provider, store: StateStore, spec: Spec) -> int:
         print(f"apply failed; rollback incomplete: {exc}")
         return 2
     except Exception as exc:
-        print(f"apply failed: {exc} (rolled back — see lifecycle log)")
+        print(f"apply failed: {exc} (rolled back; see lifecycle log)")
         return 1
     print(f"applied {len(states)} resources: {[s.name for s in states]}")
     return 0

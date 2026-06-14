@@ -49,10 +49,12 @@ def test_cli_simulate_failure_rolls_back_preserving_durable(tmp_path, capsys, ca
     assert ("net", "preserved") in events     # durable kept
 
 
-def test_cli_simulate_failure_rejected_for_aws(tmp_path, capsys):
+def test_cli_local_provider_creates_dirs(tmp_path, capsys):
     spec = _write_spec(tmp_path)
-    try:
-        main(["apply", str(spec), "--provider", "aws", "--simulate-failure", "app"])
-    except SystemExit as exc:
-        assert exc.code == 2
-    assert "only with --provider mock" in capsys.readouterr().out
+    rc = main(
+        ["apply", str(spec), "--provider", "local",
+         "--root", str(tmp_path / "world"), "--state", str(tmp_path / "s.json")]
+    )
+    assert rc == 0
+    assert "applied 4 resources" in capsys.readouterr().out
+    assert (tmp_path / "world" / "net").is_dir()
