@@ -8,6 +8,23 @@
 
 **Status:** work in progress.
 
+## Demo
+
+![bulwark rollback demo](docs/demo.gif)
+
+The demo provisions a five-resource stack on real AWS — an S3 bucket (`storage`,
+durable), a DynamoDB table (`database`, protected), and ephemeral `network`,
+`compute`, and `load_balancer`.
+
+1. **Apply fails at `compute`** (step 4 of 5). Rollback runs in reverse
+   dependency order: it deletes the ephemeral `network` it just created, but
+   preserves the durable bucket and the protected table — a half-finished run
+   never destroys the resources that hold data.
+2. **Re-apply converges.** The bucket and table already exist and are skipped;
+   only the missing resources are created.
+3. **Teardown is refused.** `database` is protected, so the whole destroy is
+   rejected before anything is deleted.
+
 ---
 
 ## The problem
@@ -111,6 +128,10 @@ The engine is provider-agnostic. AWS is the one real backend:
 Other resource types are tracked in-process and don't call AWS. Every run emits
 one lifecycle event per resource transition to stderr (a JSON line: resource,
 action, status, duration).
+
+A second real backend, `LocalFilesystemProvider` (`--provider local`), maps each
+resource to a directory on disk — the same contract, different implementation,
+and the one used to test a real provider end to end in CI.
 
 ## Quickstart
 
